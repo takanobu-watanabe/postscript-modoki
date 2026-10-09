@@ -341,6 +341,26 @@ static void vm_show_frames(ContStack *cs) {
     printf("\n");
 }
 
+// 比較演算子なら C の記号を返す。比較でなければ NULL。
+// 結果はスタックに 1 / 0 が残るだけなので、何を比べたかを別に表示するため。
+static const char *compare_symbol(const Element *e) {
+    static const struct { const char *name; const char *sym; } ops[] = {
+        { "eq", "==" }, { "ne", "!=" },
+        { "lt", "<" },  { "gt", ">" },
+        { "le", "<=" }, { "ge", ">=" },
+    };
+
+    if (e->type != ELEM_EXEC_NAME) {
+        return NULL;
+    }
+    for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
+        if (strcmp(e->u.name, ops[i].name) == 0) {
+            return ops[i].sym;
+        }
+    }
+    return NULL;
+}
+
 static void vm_run_trace(const char *code) {
     Stack *st = stack_new(100);
     Dict *dict = dict_new();
@@ -386,6 +406,8 @@ static void vm_run_trace(const char *code) {
         int depth = contstack_size(cs);
         Element e;
         int before;
+        const char *cmp;
+        Element lhs, rhs;
 
         step++;
 
@@ -406,9 +428,25 @@ static void vm_run_trace(const char *code) {
         printf("  （pc %d → %d）\n", frame->pc, frame->pc + 1);
         frame->pc++;
 
+        // 比較演算子は pop される前に、比べる2つの値を覚えておく
+        cmp = compare_symbol(&e);
+        if (cmp != NULL && stack_size(st) >= 2) {
+            rhs = stack_index(st, 0);
+            lhs = stack_index(st, 1);
+        } else {
+            cmp = NULL;
+        }
+
         // ③ 評価する
         before = contstack_size(cs);
         eval_element_vm(e, st, cs, dict);
+
+        if (cmp != NULL) {
+            int result = stack_index(st, 0).u.ival;
+
+            printf("    %d %s %d → %d（%s）\n",
+                   lhs.u.ival, cmp, rhs.u.ival, result, result ? "真" : "偽");
+        }
 
         // 評価の結果フレームが積まれたら、その名前を記録する
         if (contstack_size(cs) > before) {
