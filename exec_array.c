@@ -58,6 +58,20 @@ static bool can_expand_ifelse(ExecArray *array, int i) {
 //
 // cond は ifelse より前にすでに詰まっているので触らない。
 // 置き換えるのは直前の { A } { B } の2要素だけ。
+//
+// 例: 3 5 lt { 100 } { 200 } ifelse
+//
+//   ifelse を読んだ時点   [ 3, 5, lt, {100}, {200} ]                    i=5
+//   *i -= 2 の後          [ 3, 5, lt, (ここから上書き) ]                i=3
+//   N1 = 1 + 2            [ 3, 5, lt, 3 ]                               i=4
+//   jmp_not_if            [ 3, 5, lt, 3, jmp_not_if ]                   i=5
+//   A の中身              [ 3, 5, lt, 3, jmp_not_if, 100 ]              i=6
+//   N2 = 1                [ ... 100, 1 ]                                i=7
+//   jmp                   [ ... 100, 1, jmp ]                           i=8
+//   B の中身              [ 3, 5, lt, 3, jmp_not_if, 100, 1, jmp, 200 ] i=9
+//
+//   真: jmp_not_if で飛ばず 100 を積み、1 jmp で 200 を飛ばす → 100
+//   偽: jmp_not_if で 3 個（100 1 jmp）飛ばして 200 に着地   → 200
 static ExecArray *expand_ifelse(ExecArray *array, int *i, int *capacity) {
     ExecArray *a = array->items[*i - 2].u.exec_array;
     ExecArray *b = array->items[*i - 1].u.exec_array;
