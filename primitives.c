@@ -273,6 +273,33 @@ void prim_jmp_not_if(Stack *st, ContStack *cs, Dict *dict) {
     }
 }
 
+// 5 0 store_local
+void prim_store_local(Stack *st, ContStack *cs, Dict *dict) {
+    (void)dict;
+    Element num = stack_pop(st);  // 番号
+    Element value = stack_pop(st); // 値
+
+    assert(value.type == ELEM_INT);
+    assert(num.type == ELEM_INT);
+    assert(0 <= num.u.ival && num.u.ival < LOCALS_MAX);
+
+    Continuation *frame = contstack_top(cs);
+    frame->locals[num.u.ival] = value.u.ival;
+}
+
+// 0 load_local 
+void prim_load_local(Stack *st, ContStack *cs, Dict *dict) {
+    (void)dict;
+    Element num = stack_pop(st); // 番号
+
+    assert(num.type == ELEM_INT);
+    assert(0 <= num.u.ival && num.u.ival < LOCALS_MAX);
+
+    Continuation *frame = contstack_top(cs);
+    stack_push(st, element_int(frame->locals[num.u.ival]));
+}
+
+
 void register_primitives(Dict *dict) {
     dict_put(dict, "add", element_primitive(prim_add));
     dict_put(dict, "sub", element_primitive(prim_sub));
@@ -296,4 +323,6 @@ void register_primitives(Dict *dict) {
     dict_put(dict, "print", element_primitive(prim_print));
     dict_put(dict, "jmp", element_primitive(prim_jmp));
     dict_put(dict, "jmp_not_if", element_primitive(prim_jmp_not_if));
+    dict_put(dict, "store_local", element_primitive(prim_store_local));
+    dict_put(dict, "load_local", element_primitive(prim_load_local));
 }

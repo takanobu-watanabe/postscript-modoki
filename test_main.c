@@ -732,6 +732,18 @@ void test_eval_while(void) {
     check_eval_int("0 { dup 0 gt } { 1 sub } while", 0);   // 最初から偽なら本体は動かない
 }
 
+// 値 番号 store_local / 番号 load_local
+// locals はフレームの中にあるので、関数（{ }）の中で使う。
+void test_eval_local(void) {
+    // 入れた値を何度でも読める
+    check_eval_int("/f { 5 0 store_local 0 load_local 0 load_local add } def f", 10);
+    // 番号ごとに別の箱
+    check_eval_int("/g { 3 0 store_local 4 1 store_local 0 load_local 1 load_local mul } def g", 12);
+    // フレームごとに別の箱：inner が locals[0] を書き換えても outer の locals[0] は 7 のまま
+    check_eval_int("/inner { 99 0 store_local } def"
+                   " /outer { 7 0 store_local inner 0 load_local } def outer", 7);
+}
+
 // % から行末までがコメントとして読み飛ばされる
 void test_parse_comment(void) {
     check_eval_int("1 2 add % これはコメント\n", 3);
@@ -1020,6 +1032,7 @@ int main(void) {
     test_eval_index();
     test_eval_index_does_not_consume();
     test_eval_while();
+    test_eval_local();
     test_parse_comment();
     test_contstack_push_pop();
     test_run_add();

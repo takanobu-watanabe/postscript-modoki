@@ -10,9 +10,12 @@
 //
 // これまでは同じ情報が eval_exec_array の for ループの変数 i として
 // Cのスタックフレームの中に隠れていた。それを明示的なデータにしたもの。
+#define LOCALS_MAX 8
+
 typedef struct {
-    ExecArray *ea;   // 実行中の実行可能配列
-    int pc;          // 次に実行する items の添字（program counter）
+    ExecArray *ea;              // 実行中の実行可能配列
+    int pc;                     // 次に実行する items の添字（program counter）
+    int locals[LOCALS_MAX];     // ローカル変数（このフレーム専用）
 } Continuation;
 
 // 継続スタック。中身は cont.c に隠す。
