@@ -1,0 +1,20 @@
+%int x = 1;
+%for (int k = 0; k < 5; k++) {
+%    x = x * 2;
+%}
+%// x == 32（2 の 5 乗）
+
+% 0番目を x とする
+% repeat のカウンタは 7番目の箱を使うので、ここでは使わない
+
+/pow2 {
+    1 0 store_local
+
+    5 {
+        0 load_local 2 mul 0 store_local
+    } repeat
+
+    0 load_local
+} def
+
+pow2

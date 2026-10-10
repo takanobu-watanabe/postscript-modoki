@@ -1,4 +1,5 @@
 #include "exec_array.h"
+#include "cont.h"
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
@@ -99,6 +100,33 @@ static ExecArray *expand_ifelse(ExecArray *array, int *i, int *capacity) {
     return array;
 }
 
+// 直前の要素が { A } なら、if を jmp_not_if の列に展開できる
+static bool can_expand_if(ExecArray *array, int i) {
+    return i >= 1 && array->items[i - 1].type == ELEM_EXEC_ARRAY;
+}
+
+// 13章: if の静的コード生成
+//
+//   cond { A } if
+//     ↓
+//   cond  N jmp_not_if  A...
+//
+//   N = A の要素数   偽のとき A を丸ごと飛ばす。else が無いので jmp は要らない
+//
+// 例: 1 { 10 20 } if  →  1  2 jmp_not_if  10 20
+static ExecArray *expand_if(ExecArray *array, int *i, int *capacity) {
+    ExecArray *a = array->items[*i - 1].u.exec_array;
+
+    *i -= 1;   // { A } の1要素を取り消す（ここから上書きしていく）
+
+    array = push_item(array, i, capacity, element_int(a->count));
+    array = push_item(array, i, capacity, element_exec_name("jmp_not_if"));
+    array = push_all(array, i, capacity, a);
+
+    exec_array_free(a);
+    return array;
+}
+
 // 13章: while の静的コード生成
 //
 //   { A } { B } while        A = 条件、B = 本体
@@ -118,21 +146,86 @@ static ExecArray *expand_ifelse(ExecArray *array, int *i, int *capacity) {
 //   items[3] = B
 //   items[4] = -6           N2 = -(1+1+4)   jmp の次(6) から 6 戻って 0（C の先頭）
 //   items[5] = jmp
-static ExecArray *expand_while(ExecArray *array, int *i, int *capacity) {
-    ExecArray *a = array->items[*i - 2].u.exec_array;
-    ExecArray *b = array->items[*i - 1].u.exec_array;
-
-    *i -= 2;   // { A } { B } の2要素を取り消す（ここから上書きしていく）
-
+//
+// 条件 a と本体 b から上の列を作って末尾に追加する。repeat も使う。
+static ExecArray *push_while(ExecArray *array, int *i, int *capacity, ExecArray *a, ExecArray *b) {
     array = push_all(array, i, capacity, a);
     array = push_item(array, i, capacity, element_int(b->count + 2));
     array = push_item(array, i, capacity, element_exec_name("jmp_not_if"));
     array = push_all(array, i, capacity, b);
     array = push_item(array, i, capacity, element_int(-(a->count + b->count + 4)));
     array = push_item(array, i, capacity, element_exec_name("jmp"));
+    return array;
+}
+
+static ExecArray *expand_while(ExecArray *array, int *i, int *capacity) {
+    ExecArray *a = array->items[*i - 2].u.exec_array;
+    ExecArray *b = array->items[*i - 1].u.exec_array;
+
+    *i -= 2;   // { A } { B } の2要素を取り消す（ここから上書きしていく）
+
+    array = push_while(array, i, capacity, a, b);
 
     // 中身はコピーしたので、A と B の入れ物はもう要らない
     exec_array_free(a);
+    exec_array_free(b);
+    return array;
+}
+
+// 直前の要素が { B } なら、repeat を jmp の列に展開できる
+static bool can_expand_repeat(ExecArray *array, int i) {
+    return i >= 1 && array->items[i - 1].type == ELEM_EXEC_ARRAY;
+}
+
+// repeat のカウンタ専用の箱。ユーザーが普段使う番号とぶつからないよう最後の箱にする。
+#define REPEAT_COUNTER (LOCALS_MAX - 1)
+
+// 13章: repeat の静的コード生成
+//
+// repeat は「カウンタを1つ足した while」なので、条件と本体を作って push_while に渡す。
+//
+//   n { B } repeat
+//     ↓ 同じ意味
+//   n 7 store_local                                  count = n
+//   { 7 load_local 0 gt }                            while (count > 0)
+//   { B...  7 load_local 1 sub 7 store_local } while     B; count = count - 1;
+//
+// n は repeat より前にすでに詰まっているので触らない（実行時にスタックへ積まれる）。
+static ExecArray *expand_repeat(ExecArray *array, int *i, int *capacity) {
+    ExecArray *b = array->items[*i - 1].u.exec_array;
+    ExecArray *cond;
+    ExecArray *body;
+    int k;
+
+    *i -= 1;   // { B } の1要素を取り消す（ここから上書きしていく）
+
+    // count = n
+    array = push_item(array, i, capacity, element_int(REPEAT_COUNTER));
+    array = push_item(array, i, capacity, element_exec_name("store_local"));
+
+    // 条件: count > 0
+    cond = exec_array_new(4);
+    cond->items[0] = element_int(REPEAT_COUNTER);
+    cond->items[1] = element_exec_name("load_local");
+    cond->items[2] = element_int(0);
+    cond->items[3] = element_exec_name("gt");
+
+    // 本体: B...  count = count - 1
+    body = exec_array_new(b->count + 6);
+    for (k = 0; k < b->count; k++) {
+        body->items[k] = b->items[k];
+    }
+    body->items[k++] = element_int(REPEAT_COUNTER);
+    body->items[k++] = element_exec_name("load_local");
+    body->items[k++] = element_int(1);
+    body->items[k++] = element_exec_name("sub");
+    body->items[k++] = element_int(REPEAT_COUNTER);
+    body->items[k++] = element_exec_name("store_local");
+
+    array = push_while(array, i, capacity, cond, body);
+
+    exec_array_free(cond);
+    exec_array_free(body);
     exec_array_free(b);
     return array;
 }
@@ -158,13 +251,17 @@ ExecArray* compile_exec_array(CharSource *src) {
                 array = push_item(array, &i, &capacity, element_literal_name(out_token.u.name));
                 break;
             case TOKEN_EXEC_NAME:
-                // { A } { B } ifelse / while はコンパイル時に jmp の列へ展開する。
-                // ブロックが変数経由で渡されるなど、コンパイル時に中身が
-                // 分からない場合は、名前のまま残して実行時の prim_ifelse / prim_while に任せる。
-                if (strcmp(out_token.u.name, "ifelse") == 0 && can_expand_ifelse(array, i)) {
+                // { A } if、{ A } { B } ifelse / while、{ B } repeat はコンパイル時に jmp の列へ展開する。
+                // ブロックが変数経由で渡されるなど、コンパイル時に中身が分からない場合は、
+                // 名前のまま残して実行時の prim_if / prim_ifelse / prim_while / prim_repeat に任せる。
+                if (strcmp(out_token.u.name, "if") == 0 && can_expand_if(array, i)) {
+                    array = expand_if(array, &i, &capacity);
+                } else if (strcmp(out_token.u.name, "ifelse") == 0 && can_expand_ifelse(array, i)) {
                     array = expand_ifelse(array, &i, &capacity);
                 } else if (strcmp(out_token.u.name, "while") == 0 && can_expand_while(array, i)) {
                     array = expand_while(array, &i, &capacity);
+                } else if (strcmp(out_token.u.name, "repeat") == 0 && can_expand_repeat(array, i)) {
+                    array = expand_repeat(array, &i, &capacity);
                 } else {
                     array = push_item(array, &i, &capacity, element_exec_name(out_token.u.name));
                 }

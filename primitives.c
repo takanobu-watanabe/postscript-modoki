@@ -219,6 +219,22 @@ void prim_while(Stack *st, ContStack *cs, Dict *dict) {
     }
 }
 
+// n { 本体 } repeat
+// 本体を n 回実行する。{ } の中ではコンパイル時に展開されるので、
+// これが呼ばれるのはトップレベルに書いた場合だけ。
+void prim_repeat(Stack *st, ContStack *cs, Dict *dict) {
+    (void)cs;
+    Element body = stack_pop(st);
+    Element n = stack_pop(st);
+
+    assert(body.type == ELEM_EXEC_ARRAY);
+    assert(n.type == ELEM_INT);
+
+    for (int k = 0; k < n.u.ival; k++) {
+        eval_exec_array(body.u.exec_array, st, dict);
+    }
+}
+
 // print : 値を1つ取り出して表示する
 // default: を書かず5種類すべてを列挙しているので、将来 ElementType に
 // 値を足したとき -Wswitch が対応漏れを教えてくれる。
@@ -319,6 +335,7 @@ void register_primitives(Dict *dict) {
     dict_put(dict, "ifelse", element_primitive(prim_ifelse));
     dict_put(dict, "index", element_primitive(prim_index));
     dict_put(dict, "while", element_primitive(prim_while));
+    dict_put(dict, "repeat", element_primitive(prim_repeat));
     dict_put(dict, "def", element_primitive(prim_def));
     dict_put(dict, "print", element_primitive(prim_print));
     dict_put(dict, "jmp", element_primitive(prim_jmp));

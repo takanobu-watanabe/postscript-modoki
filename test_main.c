@@ -952,6 +952,36 @@ void test_run_ifelse_expanded(void) {
     check_run_stack("0 { 1 2 } { 4 } ifelse 5 }", f2, 2);
 }
 
+// --- 13章: if の静的コード生成 ---------------------------------------------
+
+// { } の中の cond { A } if が jmp_not_if の列に展開されていること
+//   1 { 10 20 } if  →  1  2 jmp_not_if  10 20
+void test_compile_if_expanded(void) {
+    CharSource src = make_src_from_string("1 { 10 20 } if }");
+    ExecArray *ea = compile_exec_array(&src);
+
+    UT_EQ_INT(5, ea->count);
+    UT_EQ_ELEM_INT(1, ea->items[0]);
+    UT_EQ_ELEM_INT(2, ea->items[1]);                 // A(2個)
+    UT_EQ_INT(ELEM_EXEC_NAME, ea->items[2].type);
+    UT_EQ_INT(0, strcmp("jmp_not_if", ea->items[2].u.name));
+    UT_EQ_ELEM_INT(10, ea->items[3]);
+    UT_EQ_ELEM_INT(20, ea->items[4]);
+
+    exec_array_free(ea);
+    fclose(src.fp);
+}
+
+void test_run_if_expanded(void) {
+    int t[] = { 10, 20, 3 };
+    int f[] = { 3 };
+    check_run_stack("1 { 10 20 } if 3 }", t, 3);
+    check_run_stack("0 { 10 20 } if 3 }", f, 1);   // 偽なら A を飛ばして 3 へ
+
+    // 展開されてブロックが関数と同じフレームに並ぶので、関数のローカル変数が見える
+    check_eval_int("/g { 5 0 store_local 1 { 0 load_local } if } def g", 5);
+}
+
 // --- 13章: while の静的コード生成 ------------------------------------------
 
 // { } の中の { A } { B } while が jmp の列に展開されていること
@@ -988,6 +1018,44 @@ void test_run_while_expanded(void) {
                    " { 0 load_local 1 load_local add 0 store_local"
                    "   1 1 load_local add 1 store_local } while"
                    " 0 load_local } def sum10", 45);
+}
+
+// --- 13章: repeat ---------------------------------------------------------
+
+// { } の中の n { B } repeat が、カウンタを locals[7] に置いた while に展開されること
+//   3 { 10 } repeat
+//     → 3  7 store_local
+//       7 load_local 0 gt  9 jmp_not_if  10  7 load_local 1 sub 7 store_local  -15 jmp
+void test_compile_repeat_expanded(void) {
+    CharSource src = make_src_from_string("3 { 10 } repeat }");
+    ExecArray *ea = compile_exec_array(&src);
+
+    UT_EQ_INT(18, ea->count);
+    UT_EQ_ELEM_INT(3, ea->items[0]);                 // 回数（実行時にスタックへ積まれる）
+    UT_EQ_ELEM_INT(7, ea->items[1]);                 // count = 3
+    UT_EQ_INT(0, strcmp("store_local", ea->items[2].u.name));
+    UT_EQ_ELEM_INT(9, ea->items[7]);                 // N1 = 本体(10 と count-1 の6個 = 7個) + 2
+    UT_EQ_INT(0, strcmp("jmp_not_if", ea->items[8].u.name));
+    UT_EQ_ELEM_INT(10, ea->items[9]);                // 本体
+    UT_EQ_ELEM_INT(-15, ea->items[16]);              // N2 = -(条件4 + 本体7 + 4)
+    UT_EQ_INT(0, strcmp("jmp", ea->items[17].u.name));
+
+    exec_array_free(ea);
+    fclose(src.fp);
+}
+
+void test_run_repeat(void) {
+    int three[] = { 10, 10, 10 };
+    int none[] = { 5 };
+    check_run_stack("3 { 10 } repeat }", three, 3);
+    check_run_stack("5 0 { 10 } repeat }", none, 1);       // 0 回なら本体は動かない
+
+    // 本体が関数と同じフレームに並ぶので、関数のローカル変数を使える
+    check_eval_int("/f { 0 0 store_local 4 { 0 load_local 5 add 0 store_local } repeat"
+                   " 0 load_local } def f", 20);
+
+    // トップレベルに書いた repeat は展開されず、実行時の prim_repeat が動く
+    check_eval_int("3 { 10 } repeat add add", 30);
 }
 
 // 入れ子の ifelse。内側が先にコンパイル（展開）され、それが外側に
@@ -1079,8 +1147,12 @@ int main(void) {
     test_run_jmp_not_if();
     test_compile_ifelse_expanded();
     test_run_ifelse_expanded();
+    test_compile_if_expanded();
+    test_run_if_expanded();
     test_compile_while_expanded();
     test_run_while_expanded();
+    test_compile_repeat_expanded();
+    test_run_repeat();
     test_run_ifelse_nested();
     test_compile_ifelse_fallback();
     
