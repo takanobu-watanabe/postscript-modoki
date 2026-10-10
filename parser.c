@@ -1,8 +1,27 @@
 #include "parser.h"
 #include <limits.h>
 
+// 1文字読む。全角スペース（UTF-8 で E3 80 80 の3バイト）は半角スペース ' ' として返すので、
+// 呼び出し側は is_space などの1バイトの判定をそのまま使える。
+//
+// E3 で始まる全角スペース以外の文字は、ASCII でない文字としてエラーになり読み取りが
+// 止まるので、先読みしたバイトを戻しきれなくても困らない（ungetc は1バイトしか保証されない）。
 int  cl_getc(CharSource *src) {
-    return fgetc(src->fp);
+    int c = fgetc(src->fp);
+    int c2;
+
+    if (c != 0xE3) {
+        return c;
+    }
+    c2 = fgetc(src->fp);
+    if (c2 != 0x80) {
+        ungetc(c2, src->fp);
+        return c;
+    }
+    if (fgetc(src->fp) == 0x80) {
+        return ' ';
+    }
+    return c;
 }
 
 void cl_ungetc(CharSource *src, int c){
@@ -19,6 +38,11 @@ static bool is_number(int c) {
 
 static bool is_brace(int c) {
     return c == '{' || c == '}';
+}
+
+// 全角文字など ASCII でない文字（UTF-8 では 0x80 以上のバイトで表される）
+static bool is_non_ascii(int c) {
+    return c >= 0x80;
 }
 
 bool parse_int(CharSource *src, int *out) {
@@ -145,7 +169,8 @@ bool parse_one(CharSource *src, Token *out_token) {
         char s[NAME_MAX_SIZE];
         int i = 0;
 
-        while(!is_space(c) && !is_brace(c) && c!=EOF) {
+        // ASCII でない文字も名前の区切りにする（名前に混ぜず、次の parse_one でエラーにする）
+        while(!is_space(c) && !is_brace(c) && !is_non_ascii(c) && c!=EOF) {
             if (i==NAME_MAX_SIZE-1) {
                 break;
             }
@@ -165,6 +190,12 @@ bool parse_one(CharSource *src, Token *out_token) {
     }
     else if (c == EOF) {
         out_token->type = TOKEN_EOF;
+        return false;
+    }
+    if (is_non_ascii(c)) {
+        // 1バイトだけ '%c' で出すと文字化けするので、説明と16進で出す
+        fprintf(stderr, "全角文字など ASCII 以外の文字は使えません（0x%02X）。"
+                        "全角スペースは空白として扱います\n", c);
         return false;
     }
     fprintf(stderr, "unexpected character: '%c'\n", c);

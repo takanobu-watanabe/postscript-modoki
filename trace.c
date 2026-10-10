@@ -379,6 +379,16 @@ static void vm_run_trace(const char *code) {
     program = compile_exec_array(&src);
     fclose(src.fp);
 
+    // 読めない文字があると、} に届く前に読み取りが止まって NULL が返る
+    if (program == NULL) {
+        printf("入力を最後まで読めなかったので実行しません\n");
+        free(wrapped);
+        stack_free(st);
+        dict_free(dict);
+        contstack_free(cs);
+        return;
+    }
+
     printf("=========================================\n");
     printf("入力: %s\n\n", code);
 

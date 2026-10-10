@@ -751,6 +751,26 @@ void test_parse_comment(void) {
     check_eval_int("1 % コメント\n2 % コメント\nadd", 3);
 }
 
+// 全角スペース（UTF-8 で E3 80 80）。"\xE3\x80\x80" の直後に 0-9a-f が続くと
+// 16進エスケープの続きと解釈されるので、文字列の連結で区切って使う。
+#define ZENKAKU_SPACE "\xE3\x80\x80"
+
+// 全角スペースは半角スペースと同じ区切りとして扱う
+void test_parse_zenkaku_space(void) {
+    check_eval_int("1" ZENKAKU_SPACE "2 add", 3);
+    check_eval_int("/x 5 def" ZENKAKU_SPACE "x x add", 10);   // 名前の直後
+    check_eval_int(ZENKAKU_SPACE ZENKAKU_SPACE "7", 7);        // 先頭に連続
+    check_eval_int("/abs { dup 0 lt 3 jmp_not_if 0 exch sub } def"
+                   ZENKAKU_SPACE "-5 abs", 5);                    // 実際につまずいた例
+    check_eval_int("1 2 add % 全角スペース" ZENKAKU_SPACE "入りのコメント\n", 3);
+}
+
+// 全角スペース以外の ASCII でない文字が来たら、そこで読み取りを止める
+void test_parse_non_ascii_stops(void) {
+    check_eval_int("1 2 add \xEF\xBC\x8B 100", 3);   // 全角の ＋。100 は読まれない
+    check_eval_int("1 2 add\xEF\xBC\x8B 100", 3);    // 名前の直後に続いても名前に混ざらない
+}
+
 // 演習9-4: 絶対値。if が真・偽の両方で正しく働くことを実際のプログラムで確認する
 void test_eval_abs(void) {
     check_eval_int("-5 dup 0 lt { -1 mul } if", 5);   // 負 → 符号反転する
@@ -1140,6 +1160,8 @@ int main(void) {
     test_eval_while();
     test_eval_local();
     test_parse_comment();
+    test_parse_zenkaku_space();
+    test_parse_non_ascii_stops();
     test_contstack_push_pop();
     test_run_add();
     test_run_nested();
