@@ -47,6 +47,14 @@ static bool can_expand_ifelse(ExecArray *array, int i) {
         && array->items[i - 1].type == ELEM_EXEC_ARRAY;
 }
 
+// 直前の2要素が { A } { B } なら、while を jmp の列に展開できる
+static bool can_expand_while(ExecArray *array, int i) {
+    return i >= 2
+        && array->items[i - 2].type == ELEM_EXEC_ARRAY
+        && array->items[i - 1].type == ELEM_EXEC_ARRAY;
+}
+
+
 // 12章: ifelse の静的コード生成
 //
 //   cond { A } { B } ifelse
@@ -91,6 +99,45 @@ static ExecArray *expand_ifelse(ExecArray *array, int *i, int *capacity) {
     return array;
 }
 
+// 13章: while の静的コード生成
+//
+//   { A } { B } while        A = 条件、B = 本体
+//     ↓
+//   A...  N1 jmp_not_if  B...  N2 jmp
+//
+//   N1 = B の要素数 + 2              偽のとき「B...  N2 jmp」を飛び越えてループの外へ
+//   N2 = -(A + B の要素数 + 4)       本体のあと、展開した列の先頭（A の先頭）へ戻る
+//
+// 条件と本体が呼び出し元と同じフレームに並ぶので、ローカル変数を共有できる。
+//
+// 例: { C } { B } while（どちらも1要素）
+//
+//   items[0] = C
+//   items[1] = 3            N1 = 1 + 2      jmp_not_if の次(3) から 3 進んで 6（ループの外）
+//   items[2] = jmp_not_if
+//   items[3] = B
+//   items[4] = -6           N2 = -(1+1+4)   jmp の次(6) から 6 戻って 0（C の先頭）
+//   items[5] = jmp
+static ExecArray *expand_while(ExecArray *array, int *i, int *capacity) {
+    ExecArray *a = array->items[*i - 2].u.exec_array;
+    ExecArray *b = array->items[*i - 1].u.exec_array;
+
+    *i -= 2;   // { A } { B } の2要素を取り消す（ここから上書きしていく）
+
+    array = push_all(array, i, capacity, a);
+    array = push_item(array, i, capacity, element_int(b->count + 2));
+    array = push_item(array, i, capacity, element_exec_name("jmp_not_if"));
+    array = push_all(array, i, capacity, b);
+    array = push_item(array, i, capacity, element_int(-(a->count + b->count + 4)));
+    array = push_item(array, i, capacity, element_exec_name("jmp"));
+
+    // 中身はコピーしたので、A と B の入れ物はもう要らない
+    exec_array_free(a);
+    exec_array_free(b);
+    return array;
+}
+
+
 ExecArray* compile_exec_array(CharSource *src) {
     Token out_token;
     int capacity = 8;
@@ -111,11 +158,13 @@ ExecArray* compile_exec_array(CharSource *src) {
                 array = push_item(array, &i, &capacity, element_literal_name(out_token.u.name));
                 break;
             case TOKEN_EXEC_NAME:
-                // { A } { B } ifelse はコンパイル時に jmp の列へ展開する。
+                // { A } { B } ifelse / while はコンパイル時に jmp の列へ展開する。
                 // ブロックが変数経由で渡されるなど、コンパイル時に中身が
-                // 分からない場合は、名前のまま残して実行時の prim_ifelse に任せる。
+                // 分からない場合は、名前のまま残して実行時の prim_ifelse / prim_while に任せる。
                 if (strcmp(out_token.u.name, "ifelse") == 0 && can_expand_ifelse(array, i)) {
                     array = expand_ifelse(array, &i, &capacity);
+                } else if (strcmp(out_token.u.name, "while") == 0 && can_expand_while(array, i)) {
+                    array = expand_while(array, &i, &capacity);
                 } else {
                     array = push_item(array, &i, &capacity, element_exec_name(out_token.u.name));
                 }

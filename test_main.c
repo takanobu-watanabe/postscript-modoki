@@ -952,6 +952,44 @@ void test_run_ifelse_expanded(void) {
     check_run_stack("0 { 1 2 } { 4 } ifelse 5 }", f2, 2);
 }
 
+// --- 13章: while の静的コード生成 ------------------------------------------
+
+// { } の中の { A } { B } while が jmp の列に展開されていること
+//   { 1 } { 2 } while  →  1  3 jmp_not_if  2  -6 jmp
+void test_compile_while_expanded(void) {
+    CharSource src = make_src_from_string("{ 1 } { 2 } while }");
+    ExecArray *ea = compile_exec_array(&src);
+
+    UT_EQ_INT(6, ea->count);
+    UT_EQ_ELEM_INT(1, ea->items[0]);
+    UT_EQ_ELEM_INT(3, ea->items[1]);                 // B(1個) + 2
+    UT_EQ_INT(ELEM_EXEC_NAME, ea->items[2].type);
+    UT_EQ_INT(0, strcmp("jmp_not_if", ea->items[2].u.name));
+    UT_EQ_ELEM_INT(2, ea->items[3]);
+    UT_EQ_ELEM_INT(-6, ea->items[4]);                // -(A(1個) + B(1個) + 4)
+    UT_EQ_INT(ELEM_EXEC_NAME, ea->items[5].type);
+    UT_EQ_INT(0, strcmp("jmp", ea->items[5].u.name));
+
+    exec_array_free(ea);
+    fclose(src.fp);
+}
+
+// 展開した while を実行する
+void test_run_while_expanded(void) {
+    int zero[] = { 0 };
+    check_run_stack("5 { dup 0 gt } { 1 sub } while }", zero, 1);   // 5 から 0 まで減らす
+    check_run_stack("0 { dup 0 gt } { 1 sub } while }", zero, 1);   // 最初から偽なら本体は動かない
+
+    // 条件と本体が関数と同じフレームに並ぶので、ローカル変数を共有できる
+    //   sum = 0; i = 0; while (i < 10) { sum = sum + i; i = i + 1; }  → 45
+    check_eval_int("/sum10 {"
+                   " 0 0 store_local 0 1 store_local"
+                   " { 1 load_local 10 lt }"
+                   " { 0 load_local 1 load_local add 0 store_local"
+                   "   1 1 load_local add 1 store_local } while"
+                   " 0 load_local } def sum10", 45);
+}
+
 // 入れ子の ifelse。内側が先にコンパイル（展開）され、それが外側に
 // コピーされる。jmp が相対ジャンプなので、コピーしても飛び先がずれない。
 void test_run_ifelse_nested(void) {
@@ -1041,6 +1079,8 @@ int main(void) {
     test_run_jmp_not_if();
     test_compile_ifelse_expanded();
     test_run_ifelse_expanded();
+    test_compile_while_expanded();
+    test_run_while_expanded();
     test_run_ifelse_nested();
     test_compile_ifelse_fallback();
     

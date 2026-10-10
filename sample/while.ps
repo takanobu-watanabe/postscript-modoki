@@ -1,0 +1,27 @@
+%int sum = 0;
+%int i = 0;
+%while (i < 10) {
+%    sum = sum + i;
+%    i = i + 1;
+%}
+%// sum == 45
+
+
+% 99 0 store_local
+
+% 0番目をsum
+% 1番目をiとする
+
+/sum10 {
+    0 0 store_local
+    0 1 store_local
+    
+    { 1 load_local 10 lt} {
+
+        0 load_local 1 load_local add 0 store_local
+        1 1 load_local add 1 store_local
+    } while
+    0 load_local
+} def
+
+sum10
