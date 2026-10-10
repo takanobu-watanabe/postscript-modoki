@@ -7,3 +7,4 @@ trace
 unittest_asan
 sample/ghostscript/
 dist/
+.DS_Store
